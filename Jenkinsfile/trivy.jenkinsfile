@@ -1,0 +1,69 @@
+#!/usr/bin/env groovy
+import java.time.LocalDateTime
+properties([parameters([[$class: 'ChoiceParameter', choiceType: 'PT_SINGLE_SELECT', filterLength: 1, filterable: false, name: 'CMD_INPUT', randomName: 'choice-parameter-134740087394741', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return["error"]'], script: [classpath: [], sandbox: true, script: '''return [
+"Docker_Image_Name", 
+"DockerFile", 
+"Git_Repo_URL"
+]''']]], [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Enter Name of the Image with Tag on Dockerhub', name: 'Image_Name', omitValueField: true, randomName: 'choice-parameter-134740088925255', referencedParameters: 'CMD_INPUT', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: ''], script: [classpath: [], sandbox: true, script: '''if (CMD_INPUT.equals("Docker_Image_Name")){
+  inputBox="<input name=\'value\'  class=\'setting-input\'  type=\'text\'>"
+  return inputBox
+}''']]], [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Enter Name of your Docker Image with Tag', name: 'Docker_Image_Name', omitValueField: true, randomName: 'choice-parameter-134740090539283', referencedParameters: 'CMD_INPUT', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: ''], script: [classpath: [], sandbox: true, script: '''if (CMD_INPUT.equals("DockerFile")){
+  inputBox="<input name=\'value\'  class=\'setting-input\'  type=\'text\'>"
+  return inputBox
+}''']]], [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Enter Git Repo URL', name: 'Git_Repo_URL', omitValueField: true, randomName: 'choice-parameter-134740144488004', referencedParameters: 'CMD_INPUT', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: ''], script: [classpath: [], sandbox: true, script: '''if (CMD_INPUT.equals("Git_Repo_URL")){
+  inputBox="<input name=\'value\'  class=\'setting-input\'  type=\'text\'>"
+  return inputBox
+}''']]]])])
+
+node('master') {
+    def imagetag;
+    def foldername = LocalDateTime.now();
+    checkout scm
+    if ( CMD_INPUT == 'Docker_Image_Name') {
+          stage('Scanning Docker Image'){
+              current="Image Name"
+                sh "docker pull $Image_Name"
+                sh "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v ${WORKSPACE}:/root/.cache/ aquasec/trivy image --format template --template \"@contrib/html.tpl\" -o /root/.cache/index.html  $Image_Name"
+                publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: '', reportFiles: 'index.html', reportName: 'HTML Report', reportTitles: ''])
+                sh "docker rmi $Image_Name"
+          }
+      }  
+    else if ( CMD_INPUT == 'DockerFile') {
+          stage('Upload DockerFile'){
+              current="Dockerfile"
+                // Get file using input step, will put it in build directory
+                print "=================Please upload your Dockerfile ====================="
+                def inputFile = input message: 'Upload file', parameters: [file(name: 'Dockerfile')]
+                // Read contents and write to workspace
+                writeFile(file: 'Dockerfile', text: inputFile.readToString())
+                // Stash it for use in a different part of the pipeline
+                stash name: 'data', includes: 'Dockerfile'
+          }
+          stage('Creating and Scanning the Image'){
+              current="Dockerfile"
+                sh "docker build -t ${Docker_Image_Name} ${WORKSPACE}/."
+                sh "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v ${WORKSPACE}:/root/.cache/ aquasec/trivy image --format template --template \"@contrib/html.tpl\" -o /root/.cache/index.html $Docker_Image_Name"
+                publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: '', reportFiles: 'index.html', reportName: 'HTML Report', reportTitles: ''])
+                sh "docker rmi $Docker_Image_Name"
+          }
+        
+      }
+
+     else if ( CMD_INPUT == 'Git_Repo_URL') {
+          stage('Cloning the Repo'){
+              current="Git_Repo_URL"
+              sh "mkdir $foldername"
+              sh "git clone $Git_Repo_URL $foldername"
+                
+          }  
+          stage('Building and Scanning the image'){
+              current="Git_Repo_URL"
+              sh "docker build -t dockerimage ${WORKSPACE}/$foldername"  
+              sh "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v ${WORKSPACE}:/root/.cache/ aquasec/trivy image --format template --template \"@contrib/html.tpl\" -o /root/.cache/index.html  dockerimage"
+              publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: '', reportFiles: 'index.html', reportName: 'HTML Report', reportTitles: ''])
+              sh "docker rmi dockerimage"  
+              sh "rm -rf ${WORKSPACE}/$foldername"
+          }  
+     }
+
+}
